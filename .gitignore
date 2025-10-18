@@ -1,0 +1,33 @@
+# Dependencias
+node_modules/
+package-lock.json
+
+# Archivos de construcción
+dist/
+build/
+*.tsbuildinfo
+
+# Archivos de variables de entorno
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Directorios del sistema
+.DS_Store
+Thumbs.db
+
+# Directorios de cobertura
+coverage/
+
+# Archivos de IDE y editores
+.idea/
+.vscode/
+*.swp
+*.swo 

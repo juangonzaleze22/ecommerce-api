@@ -1,0 +1,356 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String   @db.VarChar(50)
+  email        String   @unique @db.VarChar(255)
+  password     String   @db.VarChar(255)
+  phone        String? @db.VarChar(20)
+  role         Role     @default(CLIENT)
+  profileImage String?  @default("default.jpg") @db.VarChar(255)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relaciones
+  orders Order[]
+  reviews Review[]
+  cart   Cart?
+  notifications Notification[]
+  notificationPreferences NotificationPreference[]
+  userShippingAgencies UserShippingAgency[]
+
+  @@map("users")
+}
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String    @unique @db.VarChar(100)
+  description String?   @db.Text
+  image       String?   @db.VarChar(255)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relaciones
+  products Product[]
+
+  @@map("categories")
+}
+
+model Brand {
+  id          String    @id @default(uuid())
+  name        String    @unique @db.VarChar(100)
+  description String?   @db.Text
+  image       String?   @db.VarChar(255)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relaciones
+  products Product[]
+
+  @@map("brands")
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  name        String   @db.VarChar(100)
+  description String   @db.Text
+  price       Decimal  @db.Decimal(10, 2)
+  stock       Int      @default(0)
+  images      String[] @default([])
+  discount    Int      @default(0) @db.SmallInt
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  
+  brandId    String?
+  brand      Brand?   @relation(fields: [brandId], references: [id], onDelete: SetNull)
+
+  // Arrays para tallas, colores, etc.
+  sizes      String[] @default([])
+  colors     String[] @default([])
+  shoeSizes  String[] @default([])
+
+  // Relaciones inversas
+  orderItems OrderItem[]
+  cartItems  CartItem[]
+  reviews    Review[]
+
+  @@map("products")
+}
+
+model Order {
+  id             String        @id @default(uuid())
+  userId         String
+  subtotal       Decimal       @db.Decimal(10, 2)
+  total          Decimal       @db.Decimal(10, 2)
+  currency       String        @default("USD") @db.VarChar(3)
+  status         OrderStatus   @default(PENDING)
+  paymentMethod  String        @default("pagomovil") @db.VarChar(50)
+  paymentStatus  PaymentStatus @default(PENDING)
+  comprobanteFile String?      @db.VarChar(255)
+  notes          String?       @db.Text
+  shippingAddress Json?        @db.JsonB
+  paymentInfo    Json?         @db.JsonB
+  agencyId       String?       // Nueva relación con Agency
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  // Relaciones
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agency    Agency?     @relation(fields: [agencyId], references: [id], onDelete: SetNull)
+  orderItems OrderItem[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  productId String
+  quantity  Int
+  price     Decimal @db.Decimal(10, 2)
+  
+  // Información de la selección del usuario
+  selectedSize    String? @db.VarChar(50)
+  selectedColor   String? @db.VarChar(50)
+  selectedShoeSize String? @db.VarChar(50)
+  
+  // Información del producto al momento de la compra
+  productName     String? @db.VarChar(100)
+  productImage    String? @db.VarChar(255)
+
+  // Relaciones
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("order_items")
+}
+
+model Cart {
+  id     String     @id @default(uuid())
+  userId String     @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cartItems CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String @id @default(uuid())
+  cartId    String
+  productId String
+  quantity  Int    @default(1)
+
+  // Relaciones
+  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([cartId, productId])
+  @@map("cart_items")
+}
+
+model Review {
+  id        String      @id @default(uuid())
+  productId String
+  userId    String
+  rating    Int         @db.SmallInt
+  comment   String      @db.Text
+  status    ReviewStatus @default(PENDING)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  // Relaciones
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, userId])
+  @@map("reviews")
+}
+
+model State {
+  id        String   @id @default(uuid())
+  name      String   @unique @db.VarChar(100)
+  code      String   @unique @db.VarChar(10)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("states")
+}
+
+model Agency {
+  id          String   @id @default(uuid())
+  name        String   @db.VarChar(255)
+  address     String   @db.Text
+  city        String   @db.VarChar(100)
+  state       String   @db.VarChar(100)
+  zipCode     String?  @db.VarChar(20)
+  phone       String?  @db.VarChar(20)
+  email       String?  @db.VarChar(255)
+  latitude    Float?
+  longitude   Float?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  orders Order[]
+  userShippingAgencies UserShippingAgency[]
+
+  @@map("agencies")
+}
+
+model UserShippingAgency {
+  id        String   @id @default(uuid())
+  userId    String
+  agencyId  String
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agency  Agency  @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  // Asegurar que un usuario no tenga la misma agencia duplicada
+  @@unique([userId, agencyId])
+  @@map("user_shipping_agencies")
+}
+
+model Notification {
+  id          String             @id @default(uuid())
+  userId      String
+  title       String             @db.VarChar(255)
+  message     String             @db.Text
+  type        NotificationType
+  channel     NotificationChannel
+  status      NotificationStatus @default(PENDING)
+  priority    NotificationPriority @default(MEDIUM)
+  data        Json?              @db.JsonB
+  sentAt      DateTime?
+  readAt      DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  // Relaciones
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model NotificationTemplate {
+  id          String             @id @default(uuid())
+  name        String             @unique @db.VarChar(100)
+  type        NotificationType
+  channel     NotificationChannel
+  subject     String?            @db.VarChar(255)
+  content     String             @db.Text
+  variables   String[]           @default([])
+  isActive    Boolean            @default(true)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@map("notification_templates")
+}
+
+model NotificationPreference {
+  id              String             @id @default(uuid())
+  userId          String
+  type            NotificationType
+  emailEnabled    Boolean            @default(true)
+  pushEnabled     Boolean            @default(true)
+  smsEnabled      Boolean            @default(false)
+  inAppEnabled    Boolean            @default(true)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  // Relaciones
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@map("notification_preferences")
+}
+
+// Enums
+enum Role {
+  CLIENT
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum NotificationType {
+  ORDER_CREATED
+  ORDER_PAYMENT_APPROVED
+  ORDER_PAYMENT_REJECTED
+  ORDER_PROCESSING
+  ORDER_SHIPPED
+  ORDER_DELIVERED
+  STOCK_LOW
+  NEW_PRODUCT
+  DISCOUNT_AVAILABLE
+  SYSTEM_MAINTENANCE
+  WELCOME
+  PASSWORD_RESET
+  ACCOUNT_VERIFICATION
+}
+
+enum NotificationChannel {
+  EMAIL
+  PUSH
+  SMS
+  IN_APP
+  WEBHOOK
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  DELIVERED
+  READ
+}
+
+enum NotificationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+} 
