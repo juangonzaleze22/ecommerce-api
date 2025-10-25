@@ -45,7 +45,13 @@ export const getCategories = async (req: Request, res: Response) => {
         orderBy: { name: sortOrder },
         include: {
           _count: {
-            select: { products: true }
+            select: { 
+              products: {
+                where: {
+                  isActive: true // Solo contar productos activos
+                }
+              }
+            }
           }
         }
       }),
@@ -250,14 +256,32 @@ export const getActiveCategories = async (req: Request, res: Response) => {
         id: true,
         name: true,
         description: true,
-        image: true
+        image: true,
+        _count: {
+          select: { 
+            products: {
+              where: {
+                isActive: true // Solo contar productos activos
+              }
+            }
+          }
+        }
       },
       orderBy: { name: 'asc' }
     });
     
+    // Transformar datos para incluir el conteo de productos
+    const categoriesWithCount = categories.map((category: any) => ({
+      id: category.id,
+      name: category.name,
+      description: category.description,
+      image: category.image,
+      count: category._count.products
+    }));
+    
     res.json({
       success: true,
-      data: categories
+      data: categoriesWithCount
     });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error fetching active categories', error });

@@ -37,13 +37,16 @@ export const createReview = async (req: RequestWithUser, res: Response) => {
     const productId = req.params.id;
     const userId = req.user.id;
     
-    // Verificar que el producto existe
-    const product = await prisma.product.findUnique({
-      where: { id: productId }
+    // Verificar que el producto existe y está activo
+    const product = await prisma.product.findFirst({
+      where: { 
+        id: productId,
+        isActive: true // Solo productos activos
+      }
     });
     
     if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
+      return res.status(404).json({ success: false, message: 'Product not found or inactive' });
     }
     
     // Prevent duplicate reviews by the same user for the same product

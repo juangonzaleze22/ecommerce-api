@@ -18,7 +18,8 @@ export const getCart = async (req: RequestWithUser, res: Response) => {
                 name: true,
                 price: true,
                 images: true,
-                stock: true
+                stock: true,
+                isActive: true
               }
             }
           }
@@ -30,7 +31,16 @@ export const getCart = async (req: RequestWithUser, res: Response) => {
       return res.json({ success: true, data: { cartItems: [] } });
     }
     
-    res.json({ success: true, data: cart });
+    // Filtrar productos inactivos del carrito
+    const activeCartItems = cart.cartItems.filter(item => item.product.isActive);
+    
+    res.json({ 
+      success: true, 
+      data: { 
+        ...cart, 
+        cartItems: activeCartItems 
+      } 
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error fetching cart', error });
   }
@@ -42,13 +52,16 @@ export const addToCart = async (req: RequestWithUser, res: Response) => {
     const userId = req.user.id;
     const { productId, quantity } = (req.body || {}) as { productId: string; quantity: number };
     
-    // Verificar que el producto existe
-    const product = await prisma.product.findUnique({
-      where: { id: productId }
+    // Verificar que el producto existe y está activo
+    const product = await prisma.product.findFirst({
+      where: { 
+        id: productId,
+        isActive: true // Solo productos activos
+      }
     });
     
     if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
+      return res.status(404).json({ success: false, message: 'Product not found or inactive' });
     }
     
     // Buscar o crear el carrito del usuario
@@ -101,7 +114,8 @@ export const addToCart = async (req: RequestWithUser, res: Response) => {
                 name: true,
                 price: true,
                 images: true,
-                stock: true
+                stock: true,
+                isActive: true
               }
             }
           }
@@ -109,7 +123,20 @@ export const addToCart = async (req: RequestWithUser, res: Response) => {
       }
     });
     
-    res.status(201).json({ success: true, data: updatedCart });
+    // Filtrar productos inactivos del carrito
+    if (updatedCart) {
+      const activeCartItems = updatedCart.cartItems.filter(item => item.product.isActive);
+      
+      res.status(201).json({ 
+        success: true, 
+        data: { 
+          ...updatedCart, 
+          cartItems: activeCartItems 
+        } 
+      });
+    } else {
+      res.status(500).json({ success: false, message: 'Error retrieving updated cart' });
+    }
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error adding to cart', error });
   }
@@ -162,7 +189,8 @@ export const updateCart = async (req: RequestWithUser, res: Response) => {
                 name: true,
                 price: true,
                 images: true,
-                stock: true
+                stock: true,
+                isActive: true
               }
             }
           }
@@ -170,7 +198,20 @@ export const updateCart = async (req: RequestWithUser, res: Response) => {
       }
     });
     
-    res.json({ success: true, data: updatedCart });
+    // Filtrar productos inactivos del carrito
+    if (updatedCart) {
+      const activeCartItems = updatedCart.cartItems.filter(item => item.product.isActive);
+      
+      res.json({ 
+        success: true, 
+        data: { 
+          ...updatedCart, 
+          cartItems: activeCartItems 
+        } 
+      });
+    } else {
+      res.status(500).json({ success: false, message: 'Error retrieving updated cart' });
+    }
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error updating cart', error });
   }
@@ -221,7 +262,8 @@ export const removeFromCart = async (req: RequestWithUser, res: Response) => {
                 name: true,
                 price: true,
                 images: true,
-                stock: true
+                stock: true,
+                isActive: true
               }
             }
           }

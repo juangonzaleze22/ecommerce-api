@@ -233,55 +233,74 @@ export const createOrder = async (req: RequestWithUser, res: Response) => {
     }
     
     // Crear la orden con precios calculados desde el servidor
-    const order = await prisma.order.create({
-      data: {
-        userId,
-        subtotal: pricing.subtotal, // Precio calculado desde BD
-        total: pricing.total, // Precio calculado desde BD
-        currency: currency || 'USD',
-        paymentMethod: parsedPaymentInfo?.method || 'pagomovil',
-        paymentStatus: parsedPaymentInfo?.method === 'pagomovil' ? PaymentStatus.APPROVED : PaymentStatus.PENDING,
-        comprobanteFile,
-        notes,
-        shippingAddress: parsedShippingAddress,
-        paymentInfo: parsedPaymentInfo,
-        status: OrderStatus.PENDING,
-        orderItems: {
-          create: pricing.items.map((item: any) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            price: item.price, // Precio calculado desde BD
-            selectedSize: item.selectedSize,
-            selectedColor: item.selectedColor,
-            selectedShoeSize: item.selectedShoeSize,
-            productName: item.productName,
-            productImage: item.productImage
-          }))
-        }
-      },
-      include: {
-        orderItems: {
-          include: {
-            product: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-                discount: true,
-                images: true
-              }
-            }
+    const order = await prisma.$transaction(async (tx) => {
+      // Crear la orden
+      const newOrder = await tx.order.create({
+        data: {
+          userId,
+          subtotal: pricing.subtotal, // Precio calculado desde BD
+          total: pricing.total, // Precio calculado desde BD
+          currency: currency || 'USD',
+          paymentMethod: parsedPaymentInfo?.method || 'pagomovil',
+          paymentStatus: parsedPaymentInfo?.method === 'pagomovil' ? PaymentStatus.APPROVED : PaymentStatus.PENDING,
+          comprobanteFile,
+          notes,
+          shippingAddress: parsedShippingAddress,
+          paymentInfo: parsedPaymentInfo,
+          status: OrderStatus.PENDING,
+          orderItems: {
+            create: pricing.items.map((item: any) => ({
+              productId: item.productId,
+              quantity: item.quantity,
+              price: item.price, // Precio calculado desde BD
+              selectedSize: item.selectedSize,
+              selectedColor: item.selectedColor,
+              selectedShoeSize: item.selectedShoeSize,
+              productName: item.productName,
+              productImage: item.productImage
+            }))
           }
         },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            profileImage: true
+        include: {
+          orderItems: {
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  price: true,
+                  discount: true,
+                  images: true
+                }
+              }
+            }
+          },
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              profileImage: true
+            }
           }
         }
+      });
+
+      // Restar stock de los productos
+      for (const item of pricing.items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: {
+            stock: {
+              decrement: item.quantity
+            }
+          }
+        });
+        
+        console.log(`📦 [STOCK] Restando ${item.quantity} unidades del producto ${item.productId} (${item.productName})`);
       }
+
+      return newOrder;
     });
 
     // Agregar URLs usando la utilidad
@@ -550,31 +569,62 @@ export const updateOrderStatus = async (req: RequestWithUser, res: Response) => 
       });
     }
     
-    const order = await prisma.order.update({
-      where: { id: orderId },
-      data: { status: status as OrderStatus },
-      include: {
-        orderItems: {
-          include: {
-            product: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-                images: true,
-                discount: true
+    const order = await prisma.$transaction(async (tx) => {
+      // Obtener la orden actual para verificar el estado anterior
+      const currentOrder = await tx.order.findUnique({
+        where: { id: orderId },
+        include: {
+          orderItems: true
+        }
+      });
+
+      if (!currentOrder) {
+        throw new Error('Order not found');
+      }
+
+      // Si se está cancelando una orden que no estaba cancelada, restaurar stock
+      if (status === 'CANCELLED' && currentOrder.status !== 'CANCELLED') {
+        for (const item of currentOrder.orderItems) {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: {
+              stock: {
+                increment: item.quantity
               }
             }
-          }
-        },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true
-          }
+          });
+          
+          console.log(`📦 [STOCK] Restaurando ${item.quantity} unidades del producto ${item.productId} (orden cancelada)`);
         }
       }
+
+      // Actualizar el estado de la orden
+      return await tx.order.update({
+        where: { id: orderId },
+        data: { status: status as OrderStatus },
+        include: {
+          orderItems: {
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  price: true,
+                  images: true,
+                  discount: true
+                }
+              }
+            }
+          },
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          }
+        }
+      });
     });
     
     // Crear notificación según el estado de la orden

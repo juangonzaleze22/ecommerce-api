@@ -17,6 +17,7 @@ import { uploadProductImagesWithErrorHandling } from '../utils/fileUpload';
 
 const router = Router();
 
+// Rutas públicas (opcionalmente autenticadas para filtrado por rol)
 router.get('/', getProducts);
 router.get('/bestsellers', getBestSellers);
 router.get('/bestdiscounts', getBestDiscounts);

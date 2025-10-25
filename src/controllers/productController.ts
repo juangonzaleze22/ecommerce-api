@@ -46,6 +46,17 @@ export const getProducts = async (req: Request, res: Response) => {
     // Construir filtros
     const whereClause: any = {};
     
+    // Filtrado por stock: Por defecto solo productos con stock, excepto para administradores
+    const userRole = (req as any).user?.role;
+    if (userRole === 'ADMIN') {
+      console.log('🔓 [STOCK FILTER] Admin detectado - mostrando todos los productos');
+      // Los administradores pueden ver todos los productos (con y sin stock)
+    } else {
+      // Por defecto (usuarios no autenticados y clientes) solo productos con stock
+      whereClause.stock = { gt: 0 };
+      console.log('🔒 [STOCK FILTER] Usuario no autenticado/Cliente - mostrando solo productos con stock');
+    }
+    
     // Filtro por nombre (búsqueda parcial)
     if (search && typeof search === 'string') {
       whereClause.name = {
@@ -74,8 +85,8 @@ export const getProducts = async (req: Request, res: Response) => {
       }
     }
     
-    // Filtro por stock disponible
-    if (inStock !== undefined) {
+    // Filtro por stock disponible (solo para administradores)
+    if (inStock !== undefined && userRole === 'ADMIN') {
       if (inStock === 'true' || inStock === '1') {
         whereClause.stock = { gt: 0 }; // Productos con stock > 0
       } else if (inStock === 'false' || inStock === '0') {
@@ -111,13 +122,16 @@ export const getProducts = async (req: Request, res: Response) => {
       if (discountMax !== undefined) whereClause.discount.lte = Number(discountMax);
     }
 
-    // Filtro por estado activo
+    // Filtro por estado activo - por defecto solo productos activos
     if (active !== undefined) {
       if (active === 'true' || active === '1') {
         whereClause.isActive = true;
       } else if (active === 'false' || active === '0') {
         whereClause.isActive = false;
       }
+    } else {
+      // Por defecto, solo mostrar productos activos
+      whereClause.isActive = true;
     }
 
     // Filtro por productos en oferta (descuento > 0)
@@ -201,8 +215,23 @@ export const getProducts = async (req: Request, res: Response) => {
 // Get product by ID
 export const getProductById = async (req: Request, res: Response) => {
   try {
-    const product = await prisma.product.findUnique({
-      where: { id: req.params.id },
+    // Filtrado por stock: Por defecto solo productos con stock, excepto para administradores
+    const userRole = (req as any).user?.role;
+    const whereClause: any = { 
+      id: req.params.id,
+      isActive: true // Solo productos activos
+    };
+    
+    if (userRole !== 'ADMIN') {
+      // Por defecto (usuarios no autenticados y clientes) solo productos con stock
+      whereClause.stock = { gt: 0 };
+      console.log('🔒 [STOCK FILTER] Usuario no autenticado/Cliente - verificando stock del producto');
+    } else {
+      console.log('🔓 [STOCK FILTER] Admin detectado - puede ver cualquier producto');
+    }
+    
+    const product = await prisma.product.findFirst({
+      where: whereClause,
       include: {
         category: {
           select: {
@@ -282,6 +311,50 @@ export const createProduct = async (req: Request, res: Response) => {
       images = req.body.images;
     }
     
+    // Procesar tallas, colores y tallas de zapatos para creación
+    let processedSizes = [];
+    let processedColors = [];
+    let processedShoeSizes = [];
+
+    // Procesar tallas
+    if (sizes !== undefined) {
+      if (Array.isArray(sizes)) {
+        processedSizes = sizes;
+      } else if (typeof sizes === 'string') {
+        try {
+          processedSizes = JSON.parse(sizes);
+        } catch {
+          processedSizes = sizes.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        }
+      }
+    }
+
+    // Procesar colores
+    if (colors !== undefined) {
+      if (Array.isArray(colors)) {
+        processedColors = colors;
+      } else if (typeof colors === 'string') {
+        try {
+          processedColors = JSON.parse(colors);
+        } catch {
+          processedColors = colors.split(',').map(c => c.trim()).filter(c => c.length > 0);
+        }
+      }
+    }
+
+    // Procesar tallas de zapatos
+    if (shoeSizes !== undefined) {
+      if (Array.isArray(shoeSizes)) {
+        processedShoeSizes = shoeSizes;
+      } else if (typeof shoeSizes === 'string') {
+        try {
+          processedShoeSizes = JSON.parse(shoeSizes);
+        } catch {
+          processedShoeSizes = shoeSizes.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        }
+      }
+    }
+    
     const product = await prisma.product.create({
       data: {
         name,
@@ -291,9 +364,9 @@ export const createProduct = async (req: Request, res: Response) => {
         categoryId,
         brandId,
         images,
-        sizes: Array.isArray(sizes) ? sizes : [],
-        colors: Array.isArray(colors) ? colors : [],
-        shoeSizes: Array.isArray(shoeSizes) ? shoeSizes : (typeof shoeSizes === 'string' ? JSON.parse(shoeSizes) : []),
+        sizes: processedSizes,
+        colors: processedColors,
+        shoeSizes: processedShoeSizes,
         discount: Number(discount) || 0,
         isActive: isActive !== undefined ? (isActive === 'true' || isActive === true) : true
       },
@@ -332,6 +405,16 @@ export const updateProduct = async (req: Request, res: Response) => {
     const { name, description, price, stock, categoryId, brandId, sizes, colors, shoeSizes, discount, isActive, images: bodyImages } = req.body;
     let images: string[];
     
+    // Log de depuración para ver qué datos llegan
+    console.log('🔍 [UPDATE DEBUG] Datos recibidos:', {
+      sizes: sizes,
+      colors: colors,
+      shoeSizes: shoeSizes,
+      sizesType: typeof sizes,
+      colorsType: typeof colors,
+      shoeSizesType: typeof shoeSizes
+    });
+    
     // Obtener el producto actual para verificar sus imágenes
     const currentProduct = await prisma.product.findUnique({
       where: { id: req.params.id }
@@ -352,6 +435,68 @@ export const updateProduct = async (req: Request, res: Response) => {
       images = currentProduct.images;
     }
     
+    // Procesar tallas, colores y tallas de zapatos
+    let processedSizes = [];
+    let processedColors = [];
+    let processedShoeSizes = [];
+
+    // Procesar tallas
+    if (sizes !== undefined) {
+      if (Array.isArray(sizes)) {
+        processedSizes = sizes;
+      } else if (typeof sizes === 'string') {
+        try {
+          processedSizes = JSON.parse(sizes);
+        } catch {
+          // Si no es JSON válido, tratar como string separado por comas
+          processedSizes = sizes.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        }
+      }
+    } else {
+      // Si no se envían tallas, mantener las actuales
+      processedSizes = currentProduct.sizes || [];
+    }
+
+    // Procesar colores
+    if (colors !== undefined) {
+      if (Array.isArray(colors)) {
+        processedColors = colors;
+      } else if (typeof colors === 'string') {
+        try {
+          processedColors = JSON.parse(colors);
+        } catch {
+          // Si no es JSON válido, tratar como string separado por comas
+          processedColors = colors.split(',').map(c => c.trim()).filter(c => c.length > 0);
+        }
+      }
+    } else {
+      // Si no se envían colores, mantener los actuales
+      processedColors = currentProduct.colors || [];
+    }
+
+    // Procesar tallas de zapatos
+    if (shoeSizes !== undefined) {
+      if (Array.isArray(shoeSizes)) {
+        processedShoeSizes = shoeSizes;
+      } else if (typeof shoeSizes === 'string') {
+        try {
+          processedShoeSizes = JSON.parse(shoeSizes);
+        } catch {
+          // Si no es JSON válido, tratar como string separado por comas
+          processedShoeSizes = shoeSizes.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        }
+      }
+    } else {
+      // Si no se envían tallas de zapatos, mantener las actuales
+      processedShoeSizes = currentProduct.shoeSizes || [];
+    }
+
+    console.log('🔍 [UPDATE DEBUG] Datos procesados:', {
+      processedSizes,
+      processedColors,
+      processedShoeSizes
+    });
+
     const updateData: any = {
       name,
       description,
@@ -359,9 +504,9 @@ export const updateProduct = async (req: Request, res: Response) => {
       stock: Number(stock),
       categoryId,
       brandId,
-      sizes: Array.isArray(sizes) ? sizes : [],
-      colors: Array.isArray(colors) ? colors : [],
-      shoeSizes: Array.isArray(shoeSizes) ? shoeSizes : (typeof shoeSizes === 'string' ? JSON.parse(shoeSizes) : []),
+      sizes: processedSizes,
+      colors: processedColors,
+      shoeSizes: processedShoeSizes,
       discount: Number(discount) || 0,
       isActive: isActive !== undefined ? (isActive === 'true' || isActive === true) : true,
       images
@@ -392,6 +537,13 @@ export const updateProduct = async (req: Request, res: Response) => {
     
     // Agregar URLs de imágenes al producto
     const productWithUrls = addImageUrlsToProduct(product, req);
+    
+    console.log('🔍 [UPDATE DEBUG] Producto actualizado:', {
+      id: product.id,
+      sizes: product.sizes,
+      colors: product.colors,
+      shoeSizes: product.shoeSizes
+    });
     
     res.json({ success: true, data: productWithUrls });
   } catch (error: any) {
@@ -458,8 +610,11 @@ export const getBestSellers = async (req: Request, res: Response) => {
     // Obtener los productos con sus detalles
     const productsWithDetails = await Promise.all(
       bestSellers.map(async (item: any) => {
-        const product = await prisma.product.findUnique({
-          where: { id: item.productId },
+        const product = await prisma.product.findFirst({
+          where: { 
+            id: item.productId,
+            isActive: true // Solo productos activos
+          },
           include: {
             category: {
               select: {
@@ -505,7 +660,10 @@ export const getBestSellers = async (req: Request, res: Response) => {
 export const getBestDiscounts = async (req: Request, res: Response) => {
   try {
     const products = await prisma.product.findMany({
-      where: { discount: { gt: 0 } },
+      where: { 
+        discount: { gt: 0 },
+        isActive: true // Solo productos activos
+      },
       include: {
         category: {
           select: {
@@ -549,9 +707,24 @@ export const searchProducts = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Query parameter q is required' });
     }
     
+    // Filtrado por stock: Por defecto solo productos con stock, excepto para administradores
+    const userRole = (req as any).user?.role;
+    const whereClause: any = { 
+      name: { contains: q, mode: 'insensitive' },
+      isActive: true // Solo productos activos
+    };
+    
+    if (userRole !== 'ADMIN') {
+      // Por defecto (usuarios no autenticados y clientes) solo productos con stock
+      whereClause.stock = { gt: 0 };
+      console.log('🔒 [STOCK FILTER] Usuario no autenticado/Cliente - búsqueda solo en productos con stock');
+    } else {
+      console.log('🔓 [STOCK FILTER] Admin detectado - búsqueda en todos los productos');
+    }
+    
     const [products, total] = await Promise.all([
       prisma.product.findMany({
-        where: { name: { contains: q, mode: 'insensitive' } },
+        where: whereClause,
         include: {
           category: {
             select: {
@@ -573,7 +746,9 @@ export const searchProducts = async (req: Request, res: Response) => {
         skip,
         take: limit
       }),
-      prisma.product.count({ where: { name: { contains: q, mode: 'insensitive' } } })
+      prisma.product.count({ 
+        where: whereClause
+      })
     ]);
     
     // Agregar URLs de imágenes a cada producto
@@ -597,8 +772,7 @@ export const searchProducts = async (req: Request, res: Response) => {
 // Cleanup orphaned product images (admin only)
 export const cleanupOrphanedImages = async (req: Request, res: Response) => {
   try {
-    const { cleanupOrphanedProductImages } = await import('../utils/fileUpload');
-    await cleanupOrphanedProductImages();
+    await cleanupOrphanedImages(req, res);
     
     res.json({ 
       success: true, 
@@ -653,12 +827,26 @@ export const getRelatedProducts = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Producto no encontrado' });
     }
     
+    // Filtrado por stock: Por defecto solo productos con stock, excepto para administradores
+    const userRole = (req as any).user?.role;
+    const whereClause: any = {
+      categoryId: currentProduct.categoryId,
+      id: { not: id },
+      isActive: true // Solo productos activos
+    };
+    
+    if (userRole !== 'ADMIN') {
+      // Por defecto (usuarios no autenticados y clientes) solo productos con stock
+      whereClause.stock = { gt: 0 };
+      console.log('🔒 [STOCK FILTER] Usuario no autenticado/Cliente - productos relacionados solo con stock');
+    } else {
+      console.log('🔓 [STOCK FILTER] Admin detectado - productos relacionados de todos los tipos');
+    }
+    
     // Buscar productos de la misma categoría, excluyendo el actual
+    console.log('🔍 [RELATED DEBUG] Buscando productos relacionados con filtro:', whereClause);
     let relatedProducts = await prisma.product.findMany({
-      where: {
-        categoryId: currentProduct.categoryId,
-        id: { not: id }
-      },
+      where: whereClause,
       include: {
         category: {
           select: {
@@ -683,11 +871,19 @@ export const getRelatedProducts = async (req: Request, res: Response) => {
     // Si no hay suficientes, buscar por la misma marca (excluyendo los ya encontrados y el actual)
     if (relatedProducts.length < limit) {
       const excludeIds = [id, ...relatedProducts.map((p: any) => String(p.id))];
+      const brandWhereClause: any = {
+        brandId: currentProduct.brandId,
+        id: { notIn: excludeIds },
+        isActive: true // Solo productos activos
+      };
+      
+      if (userRole !== 'ADMIN') {
+        brandWhereClause.stock = { gt: 0 };
+      }
+      
+      console.log('🔍 [RELATED DEBUG] Buscando por marca con filtro:', brandWhereClause);
       const moreByBrand = await prisma.product.findMany({
-        where: {
-          brandId: currentProduct.brandId,
-          id: { notIn: excludeIds }
-        },
+        where: brandWhereClause,
         include: {
           category: {
             select: {
@@ -714,10 +910,18 @@ export const getRelatedProducts = async (req: Request, res: Response) => {
     // Si aún no hay suficientes, completar con cualquier producto (excluyendo los ya encontrados y el actual)
     if (relatedProducts.length < limit) {
       const excludeIds = [id, ...relatedProducts.map((p: any) => String(p.id))];
+      const moreWhereClause: any = {
+        id: { notIn: excludeIds },
+        isActive: true // Solo productos activos
+      };
+      
+      if (userRole !== 'ADMIN') {
+        moreWhereClause.stock = { gt: 0 };
+      }
+      
+      console.log('🔍 [RELATED DEBUG] Buscando productos adicionales con filtro:', moreWhereClause);
       const moreProducts = await prisma.product.findMany({
-        where: {
-          id: { notIn: excludeIds }
-        },
+        where: moreWhereClause,
         include: {
           category: {
             select: {
@@ -743,6 +947,11 @@ export const getRelatedProducts = async (req: Request, res: Response) => {
     
     // Agregar URLs de imágenes y oldPrice/price
     const productsWithUrls = addImageUrlsToProducts(relatedProducts, req);
+    
+    console.log('🔍 [RELATED DEBUG] Productos relacionados encontrados:', 
+      productsWithUrls.map(p => ({ id: p.id, name: p.name, stock: p.stock }))
+    );
+    
     res.json({ success: true, data: productsWithUrls });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error obteniendo productos relacionados', error });

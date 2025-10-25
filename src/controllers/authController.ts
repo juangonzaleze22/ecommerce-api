@@ -410,6 +410,139 @@ export const getMe = async (req: RequestWithUser, res: Response): Promise<void> 
   }
 };
 
+// @desc    Update user profile (name, phone, image)
+// @route   PUT /api/auth/profile
+// @access  Private
+export const updateProfile = async (req: RequestWithUser, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        message: 'Not authenticated'
+      });
+      return;
+    }
+
+    const { name, phone } = req.body as { 
+      name?: string; 
+      phone?: string; 
+    };
+
+    // Validar que al menos un campo se esté actualizando
+    if (!name && !phone && !(req as any).file) {
+      res.status(400).json({
+        success: false,
+        message: 'Debe proporcionar al menos un campo para actualizar (nombre, teléfono o imagen)'
+      });
+      return;
+    }
+
+    // Validar nombre si se proporciona
+    if (name && (typeof name !== 'string' || name.trim().length < 2)) {
+      res.status(400).json({
+        success: false,
+        message: 'El nombre debe tener al menos 2 caracteres'
+      });
+      return;
+    }
+
+    // Validar teléfono si se proporciona
+    if (phone && (typeof phone !== 'string' || phone.trim().length < 10)) {
+      res.status(400).json({
+        success: false,
+        message: 'El teléfono debe tener al menos 10 caracteres'
+      });
+      return;
+    }
+
+    // Obtener usuario actual
+    const currentUser = await prisma.user.findUnique({
+      where: { id: req.user.id }
+    });
+
+    if (!currentUser) {
+      res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado'
+      });
+      return;
+    }
+
+    // Preparar datos para actualizar
+    const updateData: any = {};
+
+    if (name) {
+      updateData.name = name.trim();
+    }
+
+    if (phone) {
+      updateData.phone = phone.trim();
+    }
+
+    // Manejar imagen de perfil si se subió una nueva
+    if ((req as any).file) {
+      // Eliminar la imagen anterior si existe y no es la imagen por defecto
+      if (currentUser.profileImage && currentUser.profileImage !== 'default.jpg') {
+        deleteOldProfileImage(currentUser.profileImage);
+      }
+      updateData.profileImage = (req as any).file.filename;
+    }
+
+    // Actualizar usuario
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: updateData
+    });
+
+    // Obtener agencias de envío del usuario
+    const userShippingAgenciesData = await prisma.userShippingAgency.findMany({
+      where: { userId: updatedUser.id },
+      include: {
+        agency: true
+      }
+    });
+
+    // Procesar agencias de envío
+    const userShippingAgencies: ShippingAgency[] = userShippingAgenciesData.map((usa: any) => ({
+      agencia_id: usa.agency.id,
+      estado_id: 0,
+      nombre: usa.agency.name,
+      codigo: usa.agency.zipCode || '',
+      direccion: usa.agency.address,
+      latitud: usa.agency.latitude?.toString() || '0',
+      longitud: usa.agency.longitude?.toString() || '0',
+      estado: usa.agency.state
+    }));
+
+    // Preparar respuesta
+    const userResponse: UserResponseData = {
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      phone: updatedUser.phone || undefined,
+      role: updatedUser.role,
+      profileImage: updatedUser.profileImage || undefined,
+      profileImageUrl: getProfileImageUrl(req as any, updatedUser.profileImage || 'default.png'),
+      shippingAgencies: userShippingAgencies,
+      createdAt: updatedUser.createdAt,
+      updatedAt: updatedUser.updatedAt
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Perfil actualizado correctamente',
+      data: userResponse
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error actualizando el perfil',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
 // @desc    Update profile image
 // @route   PUT /api/auth/updateprofileimage
 // @access  Private
@@ -466,6 +599,330 @@ export const updateProfileImage = async (req: RequestWithUser, res: Response): P
     res.status(500).json({
       success: false,
       message: 'Error actualizando la imagen de perfil',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+// @desc    Get user shipping agencies
+// @route   GET /api/auth/shipping-agencies
+// @access  Private
+export const getUserShippingAgencies = async (req: RequestWithUser, res: Response): Promise<void> => {
+  try {
+    
+    if (!req.user) {
+      console.log('❌ [SHIPPING AGENCIES] Usuario no autenticado');
+      res.status(401).json({
+        success: false,
+        message: 'Not authenticated'
+      });
+      return;
+    }
+
+    // Obtener agencias de envío del usuario
+    const userShippingAgenciesData = await prisma.userShippingAgency.findMany({
+      where: { userId: req.user.id },
+      include: {
+        agency: true
+      },
+      orderBy: [
+        { isDefault: 'desc' }, // Las predeterminadas primero
+        { createdAt: 'asc' }
+      ]
+    });
+
+    // Procesar agencias de envío
+    const userShippingAgencies: ShippingAgency[] = userShippingAgenciesData.map((usa: any) => ({
+      id: usa.id, // ID de la relación usuario-agencia
+      agencia_id: usa.agency.id,
+      estado_id: 0, // Este campo no está en la tabla Agency
+      nombre: usa.agency.name,
+      codigo: usa.agency.zipCode || '',
+      direccion: usa.agency.address,
+      latitud: usa.agency.latitude?.toString() || '0',
+      longitud: usa.agency.longitude?.toString() || '0',
+      estado: usa.agency.state,
+      isDefault: usa.isDefault,
+      createdAt: usa.createdAt,
+      updatedAt: usa.updatedAt
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: userShippingAgencies
+    });
+  } catch (error) {
+    console.error('Get user shipping agencies error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo agencias de envío',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+// @desc    Add shipping agency to user
+// @route   POST /api/auth/shipping-agencies
+// @access  Private
+export const addUserShippingAgency = async (req: RequestWithUser, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        message: 'Not authenticated'
+      });
+      return;
+    }
+
+    const { agencyId, isDefault = false } = req.body as { 
+      agencyId: string; 
+      isDefault?: boolean; 
+    };
+
+    if (!agencyId) {
+      res.status(400).json({
+        success: false,
+        message: 'ID de agencia es requerido'
+      });
+      return;
+    }
+
+    // Verificar que la agencia existe
+    const agency = await prisma.agency.findUnique({
+      where: { id: agencyId }
+    });
+
+    if (!agency) {
+      res.status(404).json({
+        success: false,
+        message: 'Agencia no encontrada'
+      });
+      return;
+    }
+
+    // Verificar que el usuario no tenga ya esta agencia
+    const existingRelation = await prisma.userShippingAgency.findUnique({
+      where: {
+        userId_agencyId: {
+          userId: req.user.id,
+          agencyId: agencyId
+        }
+      }
+    });
+
+    if (existingRelation) {
+      res.status(400).json({
+        success: false,
+        message: 'Ya tienes esta agencia agregada'
+      });
+      return;
+    }
+
+    // Si se marca como predeterminada, quitar la predeterminada anterior
+    if (isDefault) {
+      await prisma.userShippingAgency.updateMany({
+        where: { 
+          userId: req.user.id,
+          isDefault: true
+        },
+        data: { isDefault: false }
+      });
+    }
+
+    // Crear la relación usuario-agencia
+    const userShippingAgency = await prisma.userShippingAgency.create({
+      data: {
+        userId: req.user.id,
+        agencyId: agencyId,
+        isDefault: isDefault
+      },
+      include: {
+        agency: true
+      }
+    });
+
+    // Preparar respuesta
+    const response: any = {
+      id: userShippingAgency.id,
+      agencia_id: userShippingAgency.agency.id,
+      estado_id: 0,
+      nombre: userShippingAgency.agency.name,
+      codigo: userShippingAgency.agency.zipCode || '',
+      direccion: userShippingAgency.agency.address,
+      latitud: userShippingAgency.agency.latitude?.toString() || '0',
+      longitud: userShippingAgency.agency.longitude?.toString() || '0',
+      estado: userShippingAgency.agency.state,
+      isDefault: userShippingAgency.isDefault,
+      createdAt: userShippingAgency.createdAt,
+      updatedAt: userShippingAgency.updatedAt
+    };
+
+    res.status(201).json({
+      success: true,
+      message: 'Agencia agregada correctamente',
+      data: response
+    });
+  } catch (error) {
+    console.error('Add user shipping agency error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error agregando agencia de envío',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+// @desc    Remove shipping agency from user
+// @route   DELETE /api/auth/shipping-agencies/:id
+// @access  Private
+export const removeUserShippingAgency = async (req: RequestWithUser, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        message: 'Not authenticated'
+      });
+      return;
+    }
+
+    const { id } = req.params;
+
+    if (!id) {
+      res.status(400).json({
+        success: false,
+        message: 'ID de relación es requerido'
+      });
+      return;
+    }
+
+    // Verificar que la relación existe y pertenece al usuario
+    const userShippingAgency = await prisma.userShippingAgency.findFirst({
+      where: {
+        id: id,
+        userId: req.user.id
+      },
+      include: {
+        agency: true
+      }
+    });
+
+    if (!userShippingAgency) {
+      res.status(404).json({
+        success: false,
+        message: 'Agencia no encontrada o no pertenece al usuario'
+      });
+      return;
+    }
+
+    // Eliminar la relación
+    await prisma.userShippingAgency.delete({
+      where: { id: id }
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Agencia eliminada correctamente',
+      data: {
+        id: userShippingAgency.id,
+        nombre: userShippingAgency.agency.name
+      }
+    });
+  } catch (error) {
+    console.error('Remove user shipping agency error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error eliminando agencia de envío',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+// @desc    Set shipping agency as default
+// @route   PUT /api/auth/shipping-agencies/:id/set-default
+// @access  Private
+export const setDefaultShippingAgency = async (req: RequestWithUser, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        message: 'Not authenticated'
+      });
+      return;
+    }
+
+    const { id } = req.params;
+
+    if (!id) {
+      res.status(400).json({
+        success: false,
+        message: 'ID de relación es requerido'
+      });
+      return;
+    }
+
+    // Verificar que la relación existe y pertenece al usuario
+    const userShippingAgency = await prisma.userShippingAgency.findFirst({
+      where: {
+        id: id,
+        userId: req.user.id
+      },
+      include: {
+        agency: true
+      }
+    });
+
+    if (!userShippingAgency) {
+      res.status(404).json({
+        success: false,
+        message: 'Agencia no encontrada o no pertenece al usuario'
+      });
+      return;
+    }
+
+    // Quitar la predeterminada anterior
+    await prisma.userShippingAgency.updateMany({
+      where: { 
+        userId: req.user.id,
+        isDefault: true
+      },
+      data: { isDefault: false }
+    });
+
+    // Marcar esta como predeterminada
+    const updatedAgency = await prisma.userShippingAgency.update({
+      where: { id: id },
+      data: { isDefault: true },
+      include: {
+        agency: true
+      }
+    });
+
+    // Preparar respuesta
+    const response: any = {
+      id: updatedAgency.id,
+      agencia_id: updatedAgency.agency.id,
+      estado_id: 0,
+      nombre: updatedAgency.agency.name,
+      codigo: updatedAgency.agency.zipCode || '',
+      direccion: updatedAgency.agency.address,
+      latitud: updatedAgency.agency.latitude?.toString() || '0',
+      longitud: updatedAgency.agency.longitude?.toString() || '0',
+      estado: updatedAgency.agency.state,
+      isDefault: updatedAgency.isDefault,
+      createdAt: updatedAgency.createdAt,
+      updatedAt: updatedAgency.updatedAt
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Agencia marcada como predeterminada',
+      data: response
+    });
+  } catch (error) {
+    console.error('Set default shipping agency error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error marcando agencia como predeterminada',
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }

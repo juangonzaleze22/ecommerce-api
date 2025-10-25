@@ -45,7 +45,13 @@ export const getBrands = async (req: Request, res: Response) => {
         orderBy: { name: sortOrder },
         include: {
           _count: {
-            select: { products: true }
+            select: { 
+              products: {
+                where: {
+                  isActive: true // Solo contar productos activos
+                }
+              }
+            }
           }
         }
       }),
@@ -85,7 +91,13 @@ export const getBrandById = async (req: Request, res: Response) => {
       where: { id: req.params.id },
       include: {
         _count: {
-          select: { products: true }
+          select: { 
+            products: {
+              where: {
+                isActive: true // Solo contar productos activos
+              }
+            }
+          }
         }
       }
     });
@@ -250,14 +262,32 @@ export const getActiveBrands = async (req: Request, res: Response) => {
         id: true,
         name: true,
         description: true,
-        image: true
+        image: true,
+        _count: {
+          select: { 
+            products: {
+              where: {
+                isActive: true // Solo contar productos activos
+              }
+            }
+          }
+        }
       },
       orderBy: { name: 'asc' }
     });
     
+    // Transformar datos para incluir el conteo de productos
+    const brandsWithCount = brands.map((brand: any) => ({
+      id: brand.id,
+      name: brand.name,
+      description: brand.description,
+      image: brand.image,
+      count: brand._count.products
+    }));
+    
     res.json({
       success: true,
-      data: brands
+      data: brandsWithCount
     });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error fetching active brands', error });
